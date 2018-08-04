@@ -29,7 +29,7 @@
 #' @param typelist A list object with \eqn{k}th element denoting the type of outcome corresponding
 #' to the \eqn{k}th element in \code{Ylist}. Each element could be "continuous" or "binary".
 #' @param penalty For different rules, the penalty could be "lasso", "GL", "SGL", "fused",
-#' "lasso+fused", "GL+fused", "SGL+fused". For single rule, the penalty could only be "lasso".
+#' "lasso+fused", "GL+fused", "SGL+fused", or "SGL+SL". For single rule, the penalty could only be "lasso".
 #' For \code{penalty = "none"}, use function \code{mpersonalized} instead.
 #' User should always input \code{penalty} and then supply correponding penalty parameters sequence
 #' if needed.
@@ -37,6 +37,8 @@
 #' sequence will be computed.
 #' @param lambda2 \eqn{\lambda_2} in the framework of different rules. If not supplied, a default
 #' sequence will be computed.
+#' @param tau0 Parameter \eqn{\tau_0} for the \code{"SGL+SL"} penalty in the framework of different rules.
+#' If not supplied, a default sequence will be computed.
 #' @param alpha \eqn{\alpha} in the framework of different rules. If not supplied, a default value
 #' will be used depending on \code{penalty}.
 #' @param single_rule_lambda \eqn{\lambda_{single}} in the framework of single rule.
@@ -56,6 +58,10 @@
 #' \code{lambda1} sequence. The default length is 10.
 #' @param num_lambda2 If \code{lambda2} is not specified by user, user could still specify the length of the
 #' \code{lambda2} sequence. The default length is 10.
+#' @param num_tau0 If \code{tau0} is not specified by user, the user can still specify the length of the
+#' \code{tau0} sequence. The default length is 11.
+#' @param min_tau If \code{tau0} is not specified by user, \code{min_tau} specifies the minimum value
+#' for \eqn{\tau_0}. The largest value for \eqn{\tau_0} will be \code{1 / min_tau}.
 #' @param num_single_rule_lambda If \code{single_rule_lambda} is not specified, user could still specify the length
 #' of the \code{single_rule_lambda} sequence. The default length is 50.
 #'
@@ -66,7 +72,7 @@
 #'
 #' \item{penalty_parameter_sequence}{A matrix object with each row denoting a configuration of the penalty parameters.}
 #' \item{opt_penalty_parameter}{Optimal penalty parameter chosen by minimizing the cross validation error.}
-#' \item{interccept}{The vector of intercepts corresponding to the optimal penalty parameter.}
+#' \item{intercept}{The vector of intercepts corresponding to the optimal penalty parameter.}
 #' \item{beta}{The coefficient matrix corresponding to the optimal penalty parameter.}
 #' \item{number_covariates}{Number of candidate covariates considered.}
 #' \item{number_studies_or_outcomes}{Number of studies if \code{problem = "meta-analysis"} or number of outcomes if \code{problem = "multiple outcomes"}.}
@@ -99,10 +105,14 @@ mpersonalized_cv = function(problem = c("meta-analysis", "multiple outcomes"),
                             Xlist, Ylist, Trtlist, Plist = replicate(length(Xlist), NULL, simplify = FALSE),
                             typelist = replicate(length(Xlist), "continuous", simplify = FALSE),
                             penalty = c("lasso", "GL", "SGL", "fused",
-                                      "lasso+fused", "GL+fused", "SGL+fused"),
-                            lambda1 = NULL, lambda2 = NULL, single_rule_lambda = NULL,
+                                      "lasso+fused", "GL+fused", "SGL+fused",
+                                      "SGL+SL"),
+                            lambda1 = NULL, lambda2 = NULL, tau0 = NULL,
+                            single_rule_lambda = NULL,
                             num_lambda1 = ifelse(!is.null(lambda1), length(lambda1),10),
                             num_lambda2 = ifelse(!is.null(lambda2), length(lambda2),10),
+                            num_tau0    = ifelse(!is.null(tau0), length(tau0), 11),
+                            min_tau     = 1e-2,
                             num_single_rule_lambda = ifelse(!is.null(single_rule_lambda), length(single_rule_lambda), 50),
                             alpha = NULL, single_rule = FALSE, cv_folds = 5,
                             admm_control = NULL,
@@ -257,11 +267,11 @@ mpersonalized_cv = function(problem = c("meta-analysis", "multiple outcomes"),
           lambda2 = lambda_default$lambda2
       }
 
-    } else if (penalty %in% c("lasso", "GL", "SGL")){
+    } else if (penalty %in% c("lasso", "GL", "SGL", "SGL+SL")){
 
       if (!is.null(lambda2)){
         if (sum(lambda2 != 0) > 0){
-          warning("When penalty = lasso/GL/SGL, the value for lambda2 is ignored and automatically set to be 0!")
+          warning("When penalty = lasso/GL/SGL/SGL+SL, the value for lambda2 is ignored and automatically set to be 0!")
         }
       }
 
@@ -291,14 +301,30 @@ mpersonalized_cv = function(problem = c("meta-analysis", "multiple outcomes"),
             alpha = 0.95
           }
         } else alpha = 0.95
+      } else if (penalty == "SGL+SL"){
+
+        if (!is.null(alpha)){
+          if (alpha < 0 | alpha > 1){
+            warning("When penalty = SGL+SL, alpha must be between 0 and 1. The default is 0.95!")
+            alpha = 0.95
+          }
+        } else alpha = 0.95
       }
 
-      if (is.null(lambda1)){
+      if (is.null(lambda1)){ # & penalty != "SGL+SL"){
         lambda_default = lambda_estimate(modelXlist = modelXlist, modelYlist = modelYlist,
                                          penalty = penalty, single_rule = single_rule, alpha = alpha,
                                          num_lambda1 = num_lambda1, lambda1 = lambda1)
 
         lambda1 = lambda_default$lambda1
+      }
+
+      if (penalty == "SGL+SL")
+      {
+        if (is.null(tau0))
+        {
+          tau0 <- gen_tau0(num_tau0, min_tau)
+        }
       }
     }
   }
@@ -312,8 +338,15 @@ mpersonalized_cv = function(problem = c("meta-analysis", "multiple outcomes"),
   } else {
     if (penalty %in% c("lasso", "GL", "SGL")){
       tune_cost = numeric(length(lambda1))
+      names(tune_cost) <- paste0("lam=", round(lambda1, 2))
     } else if (penalty %in% c("fused", "lasso+fused", "GL+fused", "SGL+fused")){
       tune_cost = matrix(0, nrow = length(lambda1), ncol = length(lambda2))
+      rownames(tune_cost) <- paste0("lam1=", round(lambda1, 2))
+      colnames(tune_cost) <- paste0("lam2=", round(lambda2, 2))
+    } else if (penalty %in% c("SGL+SL")){
+      tune_cost = matrix(0, nrow = if(is.null(lambda1)){num_lambda1}else{length(lambda1)}, ncol = length(tau0))
+      rownames(tune_cost) <- paste0("lam=", round(lambda1, 2))
+      colnames(tune_cost) <- paste0("tau0=", round(tau0, 2))
     }
   }
 
@@ -417,6 +450,30 @@ mpersonalized_cv = function(problem = c("meta-analysis", "multiple outcomes"),
                                                               intercept = as.list(cv_interceptlist[[ind]]),
                                                               beta = split(cv_betalist[[ind]], row(cv_betalist[[ind]])), SIMPLIFY = FALSE)))
 
+      }  else if (penalty %in% c("SGL+SL")) {
+        cv_model = sparse_group_fused_lasso_method(modelYlist = cv_modelYlist, modelXlist = cv_modelXlist,
+                                                   Ybarlist = cv_Ybarlist, Xbarlist = cv_Xbarlist, Xsdlist = cv_Xsdlist,
+                                                   lambda = lambda1, alpha = alpha, tau0 = tau0, nlambda = num_lambda1)
+        cv_interceptlist = cv_model$interceptlist
+        cv_betalist = cv_model$betalist
+
+        penalty_parameter_sequence_all <- cv_model$penalty_parameter_sequence
+
+        if (is.null(lambda1))
+        {
+          nlam1 <- num_lambda1
+        } else
+        {
+          nlam1 <- length(lambda1)
+        }
+
+        for (ind1 in 1:nlam1)
+          for (ind2 in 1:length(tau0))
+            tune_cost[ind1, ind2] = tune_cost[ind1, ind2] + sum(unlist(mapply(function(w, y, x, intercept, beta) sum(w * (y - intercept - x %*% beta) ^ 2),
+                                                                              w = left_adj_Wlist, y = left_sConlist, x = left_Xlist,
+                                                                              intercept = as.list(cv_interceptlist[[(ind1 - 1) * length(tau0) + ind2]]),
+                                                                              beta = split(cv_betalist[[(ind1 - 1) * length(tau0) + ind2]], row(cv_betalist[[(ind1 - 1) * length(tau0) + ind2]])), SIMPLIFY = FALSE)))
+
       }
     }
   }
@@ -437,12 +494,16 @@ mpersonalized_cv = function(problem = c("meta-analysis", "multiple outcomes"),
     penalty_parameter_sequence = as.matrix(single_rule_lambda)
     colnames(penalty_parameter_sequence) = "single_rule_lambda"
 
+    penalty_parameter_sequence_all = penalty_parameter_sequence
+
     model_info = list(intercept = full_model$interceptlist[[opt_ind]], beta = full_model$betalist[[opt_ind]],
                       penalty_parameter_sequence = penalty_parameter_sequence,
                       opt_penalty_parameter= penalty_parameter_sequence[opt_ind,],
+                      cv_error = tune_cost,
                       penalty = "lasso", single_rule = TRUE,
                       number_covariates = p, number_studies_or_outcomes = q,
                       Xlist = Xlist, Ylist = Ylist, Trtlist = Trtlist, Plist = Plist,
+                      Ybar = Ybar, Xbar = Xbar, Xsd = Xsd,
                       problem = problem)
 
   } else {
@@ -459,22 +520,27 @@ mpersonalized_cv = function(problem = c("meta-analysis", "multiple outcomes"),
                                Ybarlist = Ybarlist, Xbarlist = Xbarlist, Xsdlist = Xsdlist,
                                lambda1 = lambda1[opt_ind1], lambda2 = lambda2[opt_ind2], alpha = alpha, admm_control = admm_control)
 
-      penalty_parameter_sequence = matrix(NULL, ncol = 2, nrow = length(lambda1) * length(lambda2))
+      penalty_parameter_sequence = matrix(0, ncol = 2, nrow = length(lambda1) * length(lambda2))
       colnames(penalty_parameter_sequence) = c("lambda1", "lambda2")
 
-      for (ind1 in 1:length(lambda1))
+      for (ind1 in 1:length(lambda1)){
         for (ind2 in 1:length(lambda2)){
-          penalty_parameter_sequence[(ind - 1) * length(lambda2) + ind2,] = c(lambda1[ind1], lambda2[ind2])
+          penalty_parameter_sequence[(ind1 - 1) * length(lambda2) + ind2,] = c(lambda1[ind1], lambda2[ind2])
         }
+      }
 
-      opt_penalty_parameter = penalty_parameter_sequencce[(opt_ind1 - 1) * length(lambda2) + opt_ind2,]
+      penalty_parameter_sequence_all = penalty_parameter_sequence
+
+      opt_penalty_parameter = penalty_parameter_sequence[(opt_ind1 - 1) * length(lambda2) + opt_ind2,]
 
       model_info = list(intercept = full_model$interceptlist[[1]], beta = full_model$betalist[[1]],
                         penalty_parameter_sequence = penalty_parameter_sequence,
                         opt_penalty_parameter = opt_penalty_parameter,
+                        cv_error = tune_cost,
                         alpha = alpha, penalty = penalty, single_rule = FALSE,
                         number_covariates = p, number_studies_or_outcomes = q,
                         Xlist = Xlist, Ylist = Ylist, Trtlist = Trtlist, Plist = Plist,
+                        Ybar = Ybarlist, Xbar = Xbarlist, Xsd = Xsdlist,
                         problem = problem)
 
     } else if (penalty %in% c("lasso", "SGL", "GL")){
@@ -488,12 +554,43 @@ mpersonalized_cv = function(problem = c("meta-analysis", "multiple outcomes"),
       penalty_parameter_sequence = as.matrix(lambda1)
       colnames(penalty_parameter_sequence) = "lambda1"
 
+      penalty_parameter_sequence_all = penalty_parameter_sequence
+
       model_info = list(intercept = full_model$interceptlist[[opt_ind]], beta = full_model$betalist[[opt_ind]],
                         penalty_parameter_sequence = penalty_parameter_sequence,
                         opt_penalty_parameter = penalty_parameter_sequence[opt_ind,],
+                        cv_error = tune_cost,
                         alpha = alpha, penalty = penalty, single_rule = FALSE,
                         number_covariates = p, number_studies_or_outcomes = q,
                         Xlist = Xlist, Ylist = Ylist, Trtlist = Trtlist, Plist = Plist,
+                        Ybar = Ybarlist, Xbar = Xbarlist, Xsd = Xsdlist,
+                        problem = problem)
+
+    } else if (penalty %in% c("SGL+SL")){
+
+      opt_ind = which(tune_cost == min(tune_cost), arr.ind = TRUE)
+      opt_ind1 = opt_ind[1]; opt_ind2 = opt_ind[2]
+
+      full_model = sparse_group_fused_lasso_method(modelYlist = modelYlist, modelXlist = modelXlist,
+                                                   Ybarlist = Ybarlist, Xbarlist = Xbarlist, Xsdlist = Xsdlist,
+                                                   lambda = lambda1, alpha = alpha, tau0 = tau0[opt_ind2],
+                                                   nlambda = num_lambda1)
+
+      penalty_parameter_sequence = full_model$penalty_parameter_sequence
+
+      #opt_penalty_parameter = penalty_parameter_sequence[(opt_ind1 - 1) * length(lambda2) + opt_ind2,]
+      opt_penalty_parameter = penalty_parameter_sequence[opt_ind1, ]
+
+
+      model_info = list(intercept = full_model$interceptlist[[opt_ind1]],
+                        beta = full_model$betalist[[opt_ind1]],
+                        penalty_parameter_sequence = penalty_parameter_sequence_all,
+                        opt_penalty_parameter = opt_penalty_parameter,
+                        cv_error = tune_cost,
+                        alpha = alpha, penalty = penalty, single_rule = FALSE,
+                        number_covariates = p, number_studies_or_outcomes = q,
+                        Xlist = Xlist, Ylist = Ylist, Trtlist = Trtlist, Plist = Plist,
+                        Ybar = Ybarlist, Xbar = Xbarlist, Xsd = Xsdlist,
                         problem = problem)
 
     }

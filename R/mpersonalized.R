@@ -27,6 +27,9 @@
 #' \item If \eqn{\lambda_1 \ne0, \lambda_2 = 0} and \eqn{\alpha = 0}, the penalty is "GL".
 #' \item If \eqn{\lambda_1 \ne0, \lambda_2 = 0} and \eqn{\alpha = 1}, the penalty is "lasso".
 #' \item If \eqn{\lambda_1, \lambda_2 = 0}, there is no penalty.
+#' \item If \eqn{\tau_0} is very large for \code{penalty = "SGL+SL"}, all coefficients across all studies will be equal.
+#' \item If \eqn{\tau_0 = 0} for \code{penalty = "SGL+SL"}, an error will be returned. However, if \eqn{\tau_0} is close to 0,
+#' more heterogeneity across studies will be preferred
 #' }
 #'
 #' On the other hand, if we would like to fit a single rule for all studies/outcomes, we let \eqn{g_1 = \dots= g_K} and
@@ -64,13 +67,15 @@
 #' @param typelist A list object with \eqn{k}th element denoting the type of outcome corresponding
 #' to the \eqn{k}th element in \code{Ylist}. Each element could be "continuous" or "binary".
 #' @param penalty For different rules, the penalty could be "none", "lasso", "GL", "SGL", "fused",
-#' "lasso+fused", "GL+fused", "SGL+fused". For single rule, the penalty could be "none" or "lasso".
+#' "lasso+fused", "GL+fused", "SGL+fused", or "SGL+SL". For single rule, the penalty could be "none" or "lasso".
 #' User should always input \code{penalty} and then supply correponding penalty parameters sequence
 #' if needed. Default option is "none".
 #' @param lambda1 \eqn{\lambda_1} in the framework of different rules. If not supplied, a default
 #' sequence will be computed.
 #' @param lambda2 \eqn{\lambda_2} in the framework of different rules. If not supplied, a default
 #' sequence will be computed.
+#' @param tau0 Parameter \eqn{\tau_0} for the \code{"SGL+SL"} penalty in the framework of different rules.
+#' If not supplied, a default sequence will be computed.
 #' @param alpha \eqn{\alpha} in the framework of different rules. If not supplied, a default value
 #' will be used depending on \code{penalty}.
 #' @param single_rule_lambda \eqn{\lambda_{single}} in the framework of single rule.
@@ -85,10 +90,14 @@
 #' should be implemented; \code{response_model}, a character string specify what outcome model to use
 #' if \code{eff_aug = TRUE}, \code{response_model} could be "lasso" or "linear";
 #' \code{contrast_builder_folds}, the number of folds used in cross validation when \code{response_model = "lasso"}.
-#' @param num_lambda1 If \code{lambda1} is not specified by user, user could still specify the length of the
+#' @param num_lambda1 If \code{lambda1} is not specified by user, the user can still specify the length of the
 #' \code{lambda1} sequence. The default length is 10.
-#' @param num_lambda2 If \code{lambda2} is not specified by user, user could still specify the length of the
+#' @param num_lambda2 If \code{lambda2} is not specified by user, the user can still specify the length of the
 #' \code{lambda2} sequence. The default length is 10.
+#' @param num_tau0 If \code{tau0} is not specified by user, the user can still specify the length of the
+#' \code{tau0} sequence. The default length is 11.
+#' @param min_tau If \code{tau0} is not specified by user, \code{min_tau} specifies the minimum value
+#' for \eqn{\tau_0}. The largest value for \eqn{\tau_0} will be \code{1 / min_tau}.
 #' @param num_single_rule_lambda If \code{single_rule_lambda} is not specified, user could still specify the length
 #' of the \code{single_rule_lambda} sequence. The default length is 50.
 #' @import glmnet SGL Matrix
@@ -132,10 +141,14 @@ mpersonalized = function(problem = c("meta-analysis", "multiple outcomes"),
                          Xlist, Ylist, Trtlist, Plist = replicate(length(Xlist), NULL, simplify = FALSE),
                          typelist = replicate(length(Xlist), "continuous", simplify = FALSE),
                          penalty = c("none", "lasso", "GL", "SGL", "fused",
+                                     "SGL+SL",
                                      "lasso+fused", "GL+fused", "SGL+fused"),
-                         lambda1 = NULL, lambda2 = NULL, single_rule_lambda = NULL,
-                         num_lambda1 = ifelse(!is.null(lambda1), length(lambda1),10),
-                         num_lambda2 = ifelse(!is.null(lambda2), length(lambda2),10),
+                         lambda1 = NULL, lambda2 = NULL, tau0 = NULL,
+                         single_rule_lambda = NULL,
+                         num_lambda1 = ifelse(!is.null(lambda1), length(lambda1), 10),
+                         num_lambda2 = ifelse(!is.null(lambda2), length(lambda2), 10),
+                         num_tau0    = ifelse(!is.null(tau0), length(tau0), 11),
+                         min_tau     = 1e-2,
                          num_single_rule_lambda = ifelse(!is.null(single_rule_lambda), length(single_rule_lambda), 50),
                          alpha = NULL, single_rule = FALSE,
                          admm_control = NULL,
@@ -322,7 +335,8 @@ mpersonalized = function(problem = c("meta-analysis", "multiple outcomes"),
         } else alpha = 0.95
       }
 
-      if (is.null(lambda1) | is.null(lambda2)){
+      if (is.null(lambda1) | is.null(lambda2))
+      {
         lambda_default = lambda_estimate(modelXlist = modelXlist, modelYlist = modelYlist,
                                          penalty = penalty, single_rule = single_rule, alpha = alpha,
                                          num_lambda1 = num_lambda1, num_lambda2 = num_lambda2,
@@ -348,11 +362,11 @@ mpersonalized = function(problem = c("meta-analysis", "multiple outcomes"),
                         Xlist = Xlist, Ylist = Ylist, Trtlist = Trtlist, Plist = Plist,
                         problem = problem)
 
-    } else if (penalty %in% c("lasso", "GL", "SGL")){
+    } else if (penalty %in% c("lasso", "GL", "SGL", "SGL+SL")){
 
       if (!is.null(lambda2)){
         if (sum(lambda2 != 0) > 0){
-          warning("When penalty = lasso/GL/SGL, the value for lambda2 is ignored and automatically set to be 0!")
+          warning("When penalty = lasso/GL/SGL/SGL+SL, the value for lambda2 is ignored and automatically set to be 0!")
         }
       }
 
@@ -382,9 +396,17 @@ mpersonalized = function(problem = c("meta-analysis", "multiple outcomes"),
             alpha = 0.95
           }
         } else alpha = 0.95
+      } else if (penalty == "SGL+SL"){
+
+        if (!is.null(alpha)){
+          if (alpha < 0 | alpha > 1){
+            warning("When penalty = SGL+SL, alpha must be between 0 and 1. The default is 0.95!")
+            alpha = 0.95
+          }
+        } else alpha = 0.95
       }
 
-      if (is.null(lambda1)){
+      if (is.null(lambda1)){  #  & penalty != "SGL+SL"
         lambda_default = lambda_estimate(modelXlist = modelXlist, modelYlist = modelYlist,
                                          penalty = penalty, single_rule = single_rule, alpha = alpha,
                                          num_lambda1 = num_lambda1, lambda1 = lambda1)
@@ -392,13 +414,29 @@ mpersonalized = function(problem = c("meta-analysis", "multiple outcomes"),
         lambda1 = lambda_default$lambda1
       }
 
+      if (penalty != "SGL+SL")
+      {
+        full_model = sparse_group_lasso_method(modelYlist = modelYlist, modelXlist = modelXlist,
+                                               Ybarlist = Ybarlist, Xbarlist = Xbarlist, Xsdlist = Xsdlist,
+                                               lambda = lambda1, alpha = alpha)
 
-      full_model = sparse_group_lasso_method(modelYlist = modelYlist, modelXlist = modelXlist,
-                                             Ybarlist = Ybarlist, Xbarlist = Xbarlist, Xsdlist = Xsdlist,
-                                             lambda = lambda1, alpha = alpha)
+        penalty_parameter_sequence = as.matrix(lambda1)
+        colnames(penalty_parameter_sequence) = "lambda1"
+      } else
+      {
 
-      penalty_parameter_sequence = as.matrix(lambda1)
-      colnames(penalty_parameter_sequence) = "lambda1"
+        if (is.null(tau0))
+        {
+          tau0 <- gen_tau0(num_tau0, min_tau)
+        }
+
+        full_model = sparse_group_fused_lasso_method(modelYlist = modelYlist, modelXlist = modelXlist,
+                                                     Ybarlist = Ybarlist, Xbarlist = Xbarlist, Xsdlist = Xsdlist,
+                                                     lambda = lambda1, alpha = alpha, tau0 = tau0,
+                                                     nlambda = num_lambda1)
+
+        penalty_parameter_sequence = full_model$penalty_parameter_sequence
+      }
 
       model_info = list(interceptlist = full_model$interceptlist, betalist = full_model$betalist,
                         penalty_parameter_sequence = penalty_parameter_sequence,

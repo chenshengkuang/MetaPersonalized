@@ -25,7 +25,7 @@ meta_method = function(modelYlist, modelXlist, Ybarlist, Xbarlist, Xsdlist, lamb
   admm_lambda2 = ifelse(lambda1 != 0, lambda1 * alpha, 0)
   admm_lambda3 = lambda2
 
-  penalty_parameter_sequence = matrix(NULL, ncol = 2, nrow = nlambda1 * nlambda2)
+  penalty_parameter_sequence = matrix(0, ncol = 2, nrow = nlambda1 * nlambda2)
   colnames(penalty_parameter_sequence) = c("lambda1", "lambda2")
 
   for (ind1 in 1:nlambda1)
@@ -43,9 +43,9 @@ meta_method = function(modelYlist, modelXlist, Ybarlist, Xbarlist, Xsdlist, lamb
       intercept = unlist(Ybarlist) - apply(beta * matrix(unlist(Xbarlist), nrow = q, ncol = p, byrow = TRUE), 1, sum)
       beta = beta / matrix(unlist(Xsdlist), nrow = q, ncol = p, byrow = TRUE)
 
-      betalist[[(ind1 - 1) * nlambda2 + ind2]] = beta
+      betalist[[(ind1 - 1) * nlambda2 + ind2]]      = beta
       interceptlist[[(ind1 - 1) * nlambda2 + ind2]] = intercept
-      iterslist[[(ind1 - 1) * nlambda2 + ind2]] = result$iters
+      iterslist[[(ind1 - 1) * nlambda2 + ind2]]     = result$iters
     }
 
   return(list(interceptlist = interceptlist,
