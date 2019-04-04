@@ -1,11 +1,12 @@
 ---
-title: "Mpersonalized Vignette"
-author: "Chensheng Kuang"
+title: "Overview of the mpersonalized for subgroup identification for meta analysis and multiple responses"
+author: "Author Name"
 date: "March 29, 2018"
-output:
-  pdf_document:
-    number_sections: yes
-    toc: yes
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Overview of mpersonalized}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
 bibliography: reference.bib
 ---
 
@@ -180,6 +181,7 @@ When using `mpersonalized` and `mpersonalized_cv`, it is recommended users speci
 
 * "none": no penalty. $\lambda_1 = 0$, $\lambda_2 = 0$.
 * "lasso": lasso penalty. $\alpha = 1$, $\lambda_1 \ne 0$, $\lambda_2 = 0$.
+* "SGL+SL": sparse group lasso with stratified lasso (proposed method) $\alpha \ne 0$ or $1$, $\lambda_1 \ne 0$, $\lambda_2 \ne 0$.
 * "GL": group lasso penalty. $\alpha = 0$, $\lambda_1 \ ne 0$, $\lambda_2 = 0$.
 * "SGL": sparse group lasso penalty. $\alpha \ne 0$ or $1$, $\lambda_1 \ne 0$, $\lambda_2 = 0$.
 * "fused": fused lasso penalty. $\lambda_1 = 0$, $\lambda_2 \ne 0$.
@@ -392,11 +394,12 @@ set.seed(123)
 # Simulated dataset for meta-analysis
 sim_dat = simulated_dataset(n = 200, problem = "meta-analysis")
 
+# use the proposed method of the paper ("SGL+SL")
 mod = mpersonalized(problem = "meta-analysis",
                     Xlist = sim_dat$Xlist,
                     Ylist = sim_dat$Ylist,
                     Trtlist = sim_dat$Trtlist,
-                    penalty = "SGL",
+                    penalty = "SGL+SL",
                     single_rule = FALSE)
 
 mod$penalty_parameter_sequence
@@ -408,7 +411,7 @@ cv_mod = mpersonalized_cv(problem = "meta-analysis",
                           Xlist = sim_dat$Xlist,
                           Ylist = sim_dat$Ylist,
                           Trtlist = sim_dat$Trtlist,
-                          penalty = "SGL",
+                          penalty = "SGL+SL",
                           single_rule = FALSE)
 
 # with cross validation, coef will directly return the coefficients with the optimal penalty parameter value
@@ -435,7 +438,7 @@ cv_mod = mpersonalized_cv(problem = "meta-analysis",
                           Xlist = sim_dat$Xlist,
                           Ylist = sim_dat$Ylist,
                           Trtlist = sim_dat$Trtlist,
-                          penalty = "SGL",
+                          penalty = "SGL+SL",
                           single_rule = FALSE)
 
 # simulate the covariates matrix for 10 new subjects
@@ -465,7 +468,7 @@ mod = mpersonalized(problem = "meta-analysis",
                     Xlist = sim_dat$Xlist,
                     Ylist = sim_dat$Ylist,
                     Trtlist = sim_dat$Trtlist,
-                    penalty = "SGL",
+                    penalty = "SGL+SL",
                     single_rule = FALSE)
 
 # interaction plot of study 1 corresponding to the model fitted with the 3rd penalty parameter value 
@@ -475,11 +478,15 @@ cv_mod = mpersonalized_cv(problem = "meta-analysis",
                           Xlist = sim_dat$Xlist,
                           Ylist = sim_dat$Ylist,
                           Trtlist = sim_dat$Trtlist,
-                          penalty = "SGL",
+                          penalty = "SGL+SL",
                           single_rule = FALSE)
 
 # interaction plot of study 1
 plot(cv_mod)[[1]]
+
+
+# plot cross validation error vs tuning parameters
+plotCVE(cv_mod)
 
 set.seed(NULL)
 ```
